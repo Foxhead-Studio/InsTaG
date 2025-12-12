@@ -16,7 +16,7 @@ from random import randint
 from utils.loss_utils import l1_loss, l2_loss, patchify, ssim, normalize
 from gaussian_renderer import render, render_motion
 import sys
-from scene import Scene, GaussianModel, MotionNetwork
+from scene import Scene, GaussianModel, MotionNetwork # 여기서 개인에 대한 가우시안 scene을 만드는 것은, pretrain_face.py의 pretrain_scene과 다른 파일이다.
 from utils.general_utils import safe_state
 import lpips
 import uuid
@@ -32,33 +32,34 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, mode_long, pretrain_ckpt_path):
-    testing_iterations = [1] + [i for i in range(0, opt.iterations + 1, 10000)]
-    checkpoint_iterations =  saving_iterations = [i for i in range(0, opt.iterations + 1, 10000)] + [opt.iterations]
+    testing_iterations = [1] + [i for i in range(0, opt.iterations + 1, 10000)] # [1, 0, 10000]
+    checkpoint_iterations =  saving_iterations = [i for i in range(0, opt.iterations + 1, 10000)] + [opt.iterations] # [0, 10000, 10000]
 
     # vars
     warm_step = 3000
-    opt.densify_until_iter = opt.iterations - 1000
-    bg_iter = opt.iterations
-    lpips_start_iter = opt.densify_until_iter - 1500
-    motion_stop_iter = bg_iter
-    mouth_select_iter = opt.iterations
-    mouth_step = 1 / max(mouth_select_iter, 1)
+    opt.densify_until_iter = opt.iterations - 1000 # 9000
+    bg_iter = opt.iterations # 해당 스텝 이후에는 모델 업데이트를 멈추는데, 이터레이션과 동일한 값이라 의미가 없음. 10000 
+    lpips_start_iter = opt.densify_until_iter - 1500 # 7500 # pretrain과 달리 여기서는 1500회 남기고 lpips 손실도 계산
+    motion_stop_iter = bg_iter # 10000 역시 의미 없는 값.
+    mouth_select_iter = opt.iterations # 10000 의미 없는 값
+    mouth_step = 1 / max(mouth_select_iter, 1) # 1 / 10000 = 1e-04
     hair_mask_interval = 7
     select_interval = 10
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset)
+    gaussians = GaussianModel(dataset) # Lieu 가우시안 초기화
     scene = Scene(dataset, gaussians)
 
-    motion_net = MotionNetwork(args=dataset).cuda()
+    motion_net = MotionNetwork(args=dataset).cuda() # Face 브랜치의 UMF
     motion_optimizer = torch.optim.AdamW(motion_net.get_params(5e-3, 5e-4), betas=(0.9, 0.99), eps=1e-8, weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.LambdaLR(motion_optimizer, lambda iter: 0.1 if iter < warm_step else 0.5 ** (iter / opt.iterations))
     if mode_long:
         scheduler = torch.optim.lr_scheduler.LambdaLR(motion_optimizer, lambda iter: 0.1 if iter < warm_step else 0.1 ** (iter / opt.iterations))
-
+    
+    # ==============모델 불러오기================== #
     # Load pre-trained
-    (motion_params, _, _) = torch.load(pretrain_ckpt_path)
+    (motion_params, _, _) = torch.load(pretrain_ckpt_path) # UMF 로드 'output/pretrain_ave/chkpnt_ema_face_latest.pth'
     # gaussians.restore(model_params, opt)
     motion_net.load_state_dict(motion_params)
     
@@ -68,15 +69,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     lpips_criterion = lpips.LPIPS(net='alex').eval().cuda()
 
     gaussians.training_setup(opt)
-    if checkpoint:
+
+    if checkpoint: # None으로 넘어감.
         (model_params, motion_params, motion_optimizer_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
         motion_net.load_state_dict(motion_params)
         motion_optimizer.load_state_dict(motion_optimizer_params)
 
-    if not mode_long:
+
+    # print(gaussians.get_xyz)
+
+    if not mode_long: # not Flase -> True
         gaussians.max_sh_degree = 1
-        
+    # ==================================== #
     bg_color = [0, 1, 0]   # [1, 1, 1] # if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -107,7 +112,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         mouth_global_lb = viewpoint_cam.talking_dict['mouth_bound'][0]
         mouth_global_ub = viewpoint_cam.talking_dict['mouth_bound'][1]
         mouth_global_lb += (mouth_global_ub - mouth_global_lb) * 0.2
-        mouth_window = (mouth_global_ub - mouth_global_lb) * 0.5
+        mouth_window = (mouth_global_ub - mouth_global_lb) * 0.5 # pretrain과 달리 0.2가 아니라 0.5
+        # train_face.py에서는 mouth_window가 훨씬 넓다. 이는 학습 초반부터 더 넓은 범위의 입 모양을 탐색하고, 샘플링 필터링이 덜 엄격하게 적용됨을 의미한다. 
+        # 즉, 다양한 입 벌림 크기의 프레임을 더 쉽게 학습에 포함하여 일반화된 얼굴 모션 학습에 더 적합하다.
 
         mouth_lb = mouth_global_lb + mouth_step * iteration * (mouth_global_ub - mouth_global_lb)
         mouth_ub = mouth_lb + mouth_window
@@ -116,11 +123,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         au_global_lb = 0
         au_global_ub = 1
-        au_window = 0.4
+        au_window = 0.4 # 0.3이 아니라 0.4로 설정
+        # train_face.py에서는 au_window가 더 넓다. 이는 AU 값의 더 넓은 범위를 탐색하며, pretrain_face.py에 비해 AU 기반 샘플링에서 더 많은 프레임을 허용한다.
 
         au_lb = au_global_lb + mouth_step * iteration * (au_global_ub - au_global_lb)
         au_ub = au_lb + au_window
-        au_lb = au_lb - au_window * 1.5
+        au_lb = au_lb - au_window * 1.5 # 0.5가 아니라 1.5
+        # train_face.py에서는 au_lb를 훨씬 더 큰 폭으로 낮춘다. 이는 AU 값이 매우 낮은(예: 눈을 거의 감지 않거나 특정 표정이 거의 없는) 프레임까지도 학습에 적극적으로 포함시키려는 시도이다.
 
         if iteration < warm_step and iteration < mouth_select_iter:
             if iteration % select_interval == 0:
@@ -131,7 +140,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
 
         if warm_step < iteration < mouth_select_iter:
-
             if iteration % select_interval == 0:
                 while viewpoint_cam.talking_dict['blink'] < au_lb or viewpoint_cam.talking_dict['blink'] > au_ub:
                     if not viewpoint_stack:
@@ -149,16 +157,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         mouth_mask = torch.as_tensor(viewpoint_cam.talking_dict["mouth_mask"]).cuda()
         head_mask =  face_mask + hair_mask
 
-        if iteration > lpips_start_iter:
+        if iteration > lpips_start_iter: # 7500 이상일 경우 아래 수행
             max_pool = torch.nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
             mouth_mask = (-max_pool(-max_pool(mouth_mask[None].float())))[0].bool()
 
         
         hair_mask_iter = (warm_step < iteration < lpips_start_iter - 1000) and iteration % hair_mask_interval != 0
 
-        if iteration < warm_step:
+        if iteration < warm_step: # 3000 이전
             # render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-            enable_align = iteration > 1000
+            enable_align = iteration > 1000 # 1000번 이전까진 align 안 함.
             render_pkg = render_motion(viewpoint_cam, gaussians, motion_net, pipe, background, return_attn=True, personalized=False, align=enable_align)
             # for param in motion_net.parameters():
             #     param.requires_grad = False
@@ -172,10 +180,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image  = viewpoint_cam.original_image.cuda() / 255.0
         gt_image_white = gt_image * head_mask + background[:, None, None] * ~head_mask
 
-        if iteration > motion_stop_iter:
+        # 생략
+        if iteration > motion_stop_iter: # 10000 이상일 때라 의미 없음
             for param in motion_net.parameters():
                 param.requires_grad = False
-        if iteration > bg_iter:
+        if iteration > bg_iter: # 10000 이상일 때라 의미 없음
             gaussians._xyz.requires_grad = False
             gaussians._opacity.requires_grad = False
             # gaussians._features_dc.requires_grad = False
@@ -184,7 +193,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gaussians._rotation.requires_grad = False
         
         # Loss
-        if iteration < bg_iter:
+        if iteration < bg_iter: # 항상 적용
             if hair_mask_iter:
                 image_white[:, hair_mask] = background[:, None]
                 gt_image_white[:, hair_mask] = background[:, None]
@@ -196,14 +205,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             loss = Ll1 + opt.lambda_dssim * (1.0 - ssim(image_white, gt_image_white))
 
             if not mode_long and iteration > warm_step + 2000:
+                # 예측 surface normal과 GT normal의 코사인 유사도 기반 loss를 추가하여, 예측된 normal이 GT normal과 유사하도록 유도함
                 loss += 0.01 * (1 - viewpoint_cam.talking_dict["normal"].cuda() * render_pkg["normal"]).sum(0)[head_mask^mouth_mask].mean()
+                # 위 loss는 head_mask에서 mouth_mask를 제외한 영역에 대해 적용됨
+
+                # opacity_reset_interval이 3000일 때, iteration % 3000 > 100 이므로
+                # 0~100 구간(즉, 3000n ~ 3000n+100)에서는 False, 그 외에는 True가 됨.
+                # 즉, opacity_reset_interval마다 100 step 동안만 이 loss를 끄고, 나머지 구간에서는 loss를 적용함.
                 if iteration % opt.opacity_reset_interval > 100:
-                    # depth_normal = depth_to_normal(viewpoint_cam, render_pkg["depth"]).permute(2,0,1)
-                    # loss += 0.001 * (1 - viewpoint_cam.talking_dict["normal"].cuda() * depth_normal).sum(0)[face_mask^mouth_mask].mean()
-                    
+                    # depth map 기반의 정규화된 깊이값과 GT 깊이값의 차이에 대한 L1 loss를 추가하여, 예측된 depth가 GT depth와 유사하도록 유도함
                     depth = render_pkg["depth"][0]
                     depth_mono = viewpoint_cam.talking_dict['depth'].cuda()
                     loss += 1e-2 * (normalize(depth)[face_mask^mouth_mask] - normalize(depth_mono)[face_mask^mouth_mask]).abs().mean()
+                    # 위 loss는 face_mask에서 mouth_mask를 제외한 영역에 대해 적용됨
                 
             # mouth_alpha_loss = 1e-2 * (alpha[:,mouth_mask]).mean()
             # if not torch.isnan(mouth_alpha_loss):
@@ -232,7 +246,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image_t = image_white.clone()
             gt_image_t = gt_image_white.clone()
 
-        else:
+        else: # 해당 없음
             # with real bg
             image = image_white - background[:, None, None] * (1.0 - alpha) + viewpoint_cam.background.cuda() / 255.0 * (1.0 - alpha)
 
@@ -242,19 +256,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image_t = image.clone()
             gt_image_t = gt_image.clone()
 
+        # lpips_start_iter는 7500으로 설정되어 있음.
+        # 즉, iteration > 7500일 때만 아래의 LPIPS 기반 patch loss가 적용된다.
         if iteration > lpips_start_iter:   
-            # mask mouth
+            # 현재 카메라의 입술 영역 좌표를 가져온다.
             [xmin, xmax, ymin, ymax] = viewpoint_cam.talking_dict['lips_rect']
+            # mode_long이 True일 때, 입술 영역에 대해 LPIPS loss를 0.01 가중치로 추가한다.
             if mode_long:
-                loss += 0.01 * lpips_criterion(image_t.clone()[:, xmin:xmax, ymin:ymax] * 2 - 1, gt_image_t.clone()[:, xmin:xmax, ymin:ymax] * 2 - 1).mean()
-
+                loss += 0.01 * lpips_criterion(
+                    image_t.clone()[:, xmin:xmax, ymin:ymax] * 2 - 1, 
+                    gt_image_t.clone()[:, xmin:xmax, ymin:ymax] * 2 - 1
+                ).mean()
+            # 입술 영역을 배경색으로 덮어서 이후 patch loss 계산에서 입술 영향이 없도록 한다.
             image_t[:, xmin:xmax, ymin:ymax] = background[:, None, None]
             gt_image_t[:, xmin:xmax, ymin:ymax] = background[:, None, None]
-            
+            # patch 크기를 64~96 사이에서 랜덤하게 정한다.
             patch_size = random.randint(32, 48) * 2
+            # mode_long이 True일 때, patchify된 이미지에 대해 LPIPS loss를 0.2 가중치로 추가한다.
             if mode_long:
-                loss += 0.2 * lpips_criterion(patchify(image_t[None, ...] * 2 - 1, patch_size), patchify(gt_image_t[None, ...] * 2 - 1, patch_size)).mean()
-            loss += 0.01 * lpips_criterion(patchify(image_t[None, ...] * 2 - 1, patch_size), patchify(gt_image_t[None, ...] * 2 - 1, patch_size)).mean()
+                loss += 0.2 * lpips_criterion(
+                    patchify(image_t[None, ...] * 2 - 1, patch_size), 
+                    patchify(gt_image_t[None, ...] * 2 - 1, patch_size)
+                ).mean()
+            # patchify된 이미지에 대해 LPIPS loss를 0.01 가중치로 추가한다.
+            loss += 0.01 * lpips_criterion(
+                patchify(image_t[None, ...] * 2 - 1, patch_size), 
+                patchify(gt_image_t[None, ...] * 2 - 1, patch_size)
+            ).mean()
+            # (주석) 전체 이미지에 대해 LPIPS loss를 0.5 가중치로 추가할 수도 있으나, 현재는 사용하지 않음.
             # loss += 0.5 * lpips_criterion(image_t[None, ...] * 2 - 1, gt_image_t[None, ...] * 2 - 1).mean()
 
 
@@ -294,7 +323,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.05 + 0.25 * iteration / opt.densify_until_iter, scene.cameras_extent, size_threshold)
                 
-                if not mode_long:
+                # [설명] 이 부분은 가우시안의 opacity(불투명도) 값을 주기적으로 리셋하는 코드다.
+                # mode_long이 False일 때만 실행된다(현재 mode_long=False이므로 항상 실행됨).
+                # opacity를 리셋하는 시점은 두 가지 경우다:
+                #   1. iteration이 opacity_reset_interval의 배수일 때 (즉, 일정 주기마다)
+                #   2. 흰색 배경을 쓸 때, densify_from_iter 500(초기 densification 시작 시점)에서 한 번
+                # 이때 gaussians.reset_opacity()를 호출해서 모든 가우시안의 opacity를 다시 초기화한다.
+                if not mode_long:  # mode_long=False이므로 항상 True
                     if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                         gaussians.reset_opacity()
             
@@ -311,6 +346,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 bg_color_mask = (colors_precomp[..., 0] < 30/255) * (colors_precomp[..., 1] > 225/255) * (colors_precomp[..., 2] < 30/255)
                 gaussians.prune_points(bg_color_mask.squeeze())
                 
+                # [설명] 이 부분은 z축(깊이 방향) 좌표가 -0.07보다 작은(즉, 너무 뒤에 있는) 가우시안 포인트들을 제거(prune)하는 코드다.
+                # mode_long이 False일 때만 실행된다(현재 mode_long=False이므로 항상 실행됨).
+                # gaussians.get_xyz[:, -1]은 모든 가우시안의 z좌표만 추출한다.
+                # (gaussians.get_xyz[:, -1] < -0.07)는 z좌표가 -0.07보다 작은 포인트에 대해 True인 불리언 마스크를 만든다.
+                # squeeze()는 불필요한 차원을 제거한다.
+                # gaussians.prune_points(...)를 통해 해당 마스크에 해당하는 포인트들을 실제로 삭제한다.
                 if not mode_long:
                     gaussians.prune_points((gaussians.get_xyz[:, -1] < -0.07).squeeze())
 
@@ -435,8 +476,8 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
-    parser.add_argument("--long", action='store_true', default=False)
-    parser.add_argument("--pretrain_path", type=str, default = None)
+    parser.add_argument("--long", action='store_true', default=False) # 더 많은 프레임 추출? False
+    parser.add_argument("--pretrain_path", type=str, default = None) # 이전 모델 체크포인트 경로 'output/pretrain_ave/chkpnt_ema_face_latest.pth'
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
