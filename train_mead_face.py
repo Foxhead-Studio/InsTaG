@@ -204,6 +204,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         au_ub = au_lb + au_window # # 액션 유닛 상한값을 윈도우에 따라 업데이트
         au_lb = au_lb - au_window * 1.5 # 0.5가 아니라 1.5 하한값을 윈도우의 1.5배만큼 더 낮춤
         # train_face.py에서는 au_lb를 훨씬 더 큰 폭으로 낮춘다. 이는 AU 값이 매우 낮은(예: 눈을 거의 감지 않거나 특정 표정이 거의 없는) 프레임까지도 학습에 적극적으로 포함시키려는 시도이다.
+        
+        # au_lb가 과도하게 높아지지 않도록 제한 (blink 값은 0~1 범위이므로)
+        # au_lb의 최대값을 0.15로 제한하여 항상 충분한 범위의 프레임을 샘플링할 수 있도록 함
+        # 0.15로 제한하면 au_lb 범위가 [-0.6, 0.15]가 되어 대부분의 blink 값을 포함할 수 있음
+        au_lb_max = 0.15 # au_lb의 최대값 제한 (더 낮게 설정하여 다양한 프레임 샘플링)
+        if au_lb > au_lb_max:
+            au_lb = au_lb_max
+            au_ub = au_lb + au_window # au_lb가 제한되면 au_ub도 재조정
 
         if iteration < warm_step and iteration < mouth_select_iter: # 학습 초반 (iteration < 3,000 < 10,000)
             if iteration % select_interval == 0: # iteration = 10의 배수일 때
@@ -295,12 +303,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     blink_val_current = viewpoint_cam.talking_dict['blink'].item() if torch.is_tensor(viewpoint_cam.talking_dict['blink']) else viewpoint_cam.talking_dict['blink']
                     attempts += 1
                 
-                # 조건을 만족하는 프레임을 찾지 못한 경우, 가장 가까운 프레임 선택
+                # 조건을 만족하는 프레임을 찾지 못한 경우 처리
                 if attempts >= max_attempts:
                     all_cameras = scene.getTrainCameras()
                     # 멀티뷰인 경우 front 뷰만 필터링
                     if scene.multiview_data is not None:
                         all_cameras = [cam for cam in all_cameras if cam.talking_dict.get('view_name') == 'front']
+                    
+                    if len(all_cameras) == 0:
+                        print(f"[ITER {iteration}] blink 샘플링: 사용 가능한 카메라가 없습니다.")
+                        continue
+                    
+                    # 가장 가까운 프레임 찾기
                     best_cam = None
                     min_distance = float('inf')
                     violation_type = None # 'lower' 또는 'upper'
@@ -327,14 +341,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             violation_type = None
                             break
                     
-                    if best_cam is not None:
-                        viewpoint_cam = best_cam
-                        selected_img_id = best_cam.talking_dict['img_id']  # 선택된 프레임의 img_id 업데이트
-                        blink_val_best = best_cam.talking_dict['blink'].item() if torch.is_tensor(best_cam.talking_dict['blink']) else best_cam.talking_dict['blink']
-                        if violation_type == 'lower':
-                            print(f"[ITER {iteration}] blink 샘플링: 하한({au_lb:.2f})을 만족하는 프레임이 없어, 가장 가까운 프레임(blink={blink_val_best:.2f}) 선택")
-                        elif violation_type == 'upper':
-                            print(f"[ITER {iteration}] blink 샘플링: 상한({au_ub:.2f})을 만족하는 프레임이 없어, 가장 가까운 프레임(blink={blink_val_best:.2f}) 선택")
+                    # 조건을 만족하지 못한 경우 랜덤 샘플링 수행
+                    # 같은 프레임만 반복되는 것을 방지하기 위해 항상 랜덤 샘플링
+                    viewpoint_cam = all_cameras[randint(0, len(all_cameras)-1)]
+                    selected_img_id = viewpoint_cam.talking_dict['img_id']
+                    blink_val_random = viewpoint_cam.talking_dict['blink'].item() if torch.is_tensor(viewpoint_cam.talking_dict['blink']) else viewpoint_cam.talking_dict['blink']
+                    print(f"[ITER {iteration}] blink 샘플링: 조건을 만족하는 프레임을 찾지 못해 랜덤 샘플링 수행 (blink={blink_val_random:.2f}, 요구 범위=[{au_lb:.2f}, {au_ub:.2f}])")
 
         # iteration에 따른 범위 예시:
         # iteration = 3000: au_lb = -0.3, au_ub = 0.7 (범위: [-0.3, 0.7])
