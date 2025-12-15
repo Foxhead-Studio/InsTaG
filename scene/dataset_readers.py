@@ -323,14 +323,129 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             
     return cam_infos
 
+def readMultiViewCamerasFromTransforms(parent_path, transformsfile, white_background, extension=".jpg", audio_file='', audio_extractor='deepspeech', N_views=-1, preload=True):
+    # 멀티뷰 데이터를 읽는 함수
+    # parent_path: 상위 폴더 경로 (예: './data/MEAD/027')
+    # 각 뷰 폴더(front, left_30 등)에서 transforms_train.json을 읽어서 img_id별로 그룹화
+    
+    # 상위 폴더에서 모든 뷰 폴더 탐색
+    view_folders = []
+    if os.path.isdir(parent_path):
+        for item in os.listdir(parent_path):
+            item_path = os.path.join(parent_path, item) # '/home/white/github/InsTaG/data/MEAD/027/left_30'
+            if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, transformsfile)):
+                view_folders.append(item)
+    
+    if not view_folders:
+        raise ValueError(f"No view folders found in {parent_path} with {transformsfile}")
+    
+    # front 뷰를 기준 뷰로 사용
+    if 'front' not in view_folders:
+        raise ValueError(f"'front' view folder not found in {parent_path}")
+    
+    view_folders.sort()  # 일관된 순서를 위해 정렬
+    # front를 맨 앞으로 이동
+    if 'front' in view_folders:
+        view_folders.remove('front')
+        view_folders.insert(0, 'front')
+    
+    print(f"Found {len(view_folders)} view folders: {view_folders}")
+    
+    # 각 뷰의 카메라 정보를 읽어서 img_id별로 그룹화
+    multiview_cameras = {}  # {img_id: {view_name: CameraInfo, ...}, ...}
+    
+    # 먼저 front 뷰를 읽어서 img_id 목록을 얻음
+    front_path = os.path.join(parent_path, 'front')
+    front_cam_infos = readCamerasFromTransforms(front_path, transformsfile, white_background, extension, audio_file, audio_extractor, N_views, preload)
+    
+    # front 뷰의 img_id를 기준으로 다른 뷰들도 읽음
+    front_img_ids = {cam.talking_dict['img_id'] for cam in front_cam_infos}
+    
+    for view_name in view_folders:
+        view_path = os.path.join(parent_path, view_name)
+        print(f"Reading {view_name} view from {view_path}")
+        
+        try:
+            view_cam_infos = readCamerasFromTransforms(view_path, transformsfile, white_background, extension, audio_file, audio_extractor, N_views, preload)
+            
+            # img_id별로 그룹화
+            for cam_info in view_cam_infos:
+                img_id = cam_info.talking_dict['img_id']
+                
+                # front 뷰에 있는 img_id만 사용 (다른 뷰에만 있는 프레임은 제외)
+                if img_id in front_img_ids:
+                    if img_id not in multiview_cameras:
+                        multiview_cameras[img_id] = {}
+                    multiview_cameras[img_id][view_name] = cam_info
+        except Exception as e:
+            print(f"Warning: Failed to read {view_name} view: {e}")
+            continue
+    
+    # front 뷰에 있는 모든 img_id가 모든 뷰에 있는지 확인하고, 없는 경우 경고
+    for img_id in front_img_ids:
+        if img_id not in multiview_cameras:
+            print(f"Warning: img_id {img_id} not found in any view")
+        else:
+            missing_views = set(view_folders) - set(multiview_cameras[img_id].keys())
+            if missing_views:
+                print(f"Warning: img_id {img_id} missing views: {missing_views}")
+    
+    # 리스트 형태로 변환 (하위 호환성을 위해)
+    # 각 CameraInfo에 view_name 정보를 talking_dict에 추가
+    cam_infos_list = []
+    for img_id in sorted(multiview_cameras.keys()):
+        for view_name, cam_info in multiview_cameras[img_id].items():
+            # talking_dict에 view_name 추가 (원본 수정 방지를 위해 복사)
+            talking_dict = cam_info.talking_dict.copy()
+            talking_dict['view_name'] = view_name
+            talking_dict['is_multiview'] = True
+            
+            # CameraInfo는 NamedTuple이므로 새로 생성해야 함
+            new_cam_info = CameraInfo(
+                uid=cam_info.uid,
+                R=cam_info.R,
+                T=cam_info.T,
+                FovY=cam_info.FovY,
+                FovX=cam_info.FovX,
+                image=cam_info.image,
+                image_path=cam_info.image_path,
+                image_name=cam_info.image_name,
+                width=cam_info.width,
+                height=cam_info.height,
+                background=cam_info.background,
+                talking_dict=talking_dict
+            )
+            cam_infos_list.append(new_cam_info)
+    
+    # 멀티뷰 구조도 함께 반환하기 위해 별도 속성으로 저장
+    # 하지만 SceneInfo는 리스트만 받으므로, 나중에 Scene 클래스에서 처리
+    return cam_infos_list, multiview_cameras
+
 def readNerfSyntheticInfo(path, white_background, eval, extension=".jpg", args=None, preload=True, all_for_train=False):
     audio_file = args.audio # ''
     audio_extractor = args.audio_extractor # 'deepspeech'
+    
+    # MEAD 데이터셋인지 확인 (path에 'MEAD'가 포함되어 있고, 상위 폴더에 여러 뷰 폴더가 있는 경우)
+    is_multiview = 'MEAD' in path and os.path.isdir(path)
+    multiview_data = None
+    
+    if is_multiview:
+        # 상위 폴더에서 뷰 폴더 확인
+        view_folders = [item for item in os.listdir(path) if os.path.isdir(os.path.join(path, item)) and os.path.exists(os.path.join(path, item, "transforms_train.json"))]
+        is_multiview = len(view_folders) > 1 and 'front' in view_folders
+    
     if not eval: # not False -> True
         print("Reading Training Transforms") # 학습 카메라 정보를 읽는다는 메시지를 출력한다.
-        train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension, audio_file, audio_extractor, args.N_views, preload=preload)
+        if is_multiview:
+            print("Detected multiview MEAD dataset, reading all views...")
+            train_cam_infos, multiview_data = readMultiViewCamerasFromTransforms(path, "transforms_train.json", white_background, extension, audio_file, audio_extractor, args.N_views, preload=preload)
+        else:
+            train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension, audio_file, audio_extractor, args.N_views, preload=preload)
     print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_val.json", white_background, extension, audio_file, audio_extractor, args.N_views, preload=preload)
+    if is_multiview:
+        test_cam_infos, _ = readMultiViewCamerasFromTransforms(path, "transforms_val.json", white_background, extension, audio_file, audio_extractor, args.N_views, preload=preload)
+    else:
+        test_cam_infos = readCamerasFromTransforms(path, "transforms_val.json", white_background, extension, audio_file, audio_extractor, args.N_views, preload=preload)
     
     if all_for_train: # False
         train_cam_infos.extend(test_cam_infos)
@@ -371,7 +486,12 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".jpg", args=N
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path)
-    return scene_info
+    
+    # 멀티뷰 데이터가 있으면 함께 반환
+    if is_multiview and multiview_data is not None:
+        return scene_info, multiview_data
+    else:
+        return scene_info, None
 
 sceneLoadTypeCallbacks = {
     "Colmap": None,
