@@ -93,6 +93,13 @@ def save_transforms(base_dir, ori_imgs_dir):
     print(f'[INFO] ===== finished saving transforms =====')
 
 
+'''
+학습/검증 데이터셋 분할: 전체 프레임(valid_num)을 학습(train_ids)과 검증(val_ids) 세트로 나눕니다.
+split.py에서는 train_val_split = valid_num - 25 * 12 - 1로 설정되어, 마지막 12초 분량의 프레임을 검증 세트로 사용하는 것으로 보입니다 (프레임 레이트가 25fps라고 가정).
+process.py에서는 train_val_split = int(valid_num * 10 / 11)로 설정되어, 전체 프레임의 약 1/11을 검증 세트로 사용합니다.
+transforms_*.json 파일 생성 및 저장: 각 프레임에 대한 transform_matrix (월드 좌표계 변환 행렬)와 카메라 내외부 파라미터(초점 거리, 이미지 중심)를 포함하는 JSON 파일을 transforms_train.json과 transforms_val.json으로 저장합니다.
+'''
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str, help="path to video file")
@@ -117,4 +124,3 @@ if __name__ == '__main__':
     # save transforms.json
     if opt.task == -1 or opt.task == 9:
         save_transforms(base_dir, ori_imgs_dir)
-

@@ -92,7 +92,7 @@ class _grid_encode(Function):
 
 grid_encode = _grid_encode.apply
 
-
+# (input_dim=2, num_levels=12, level_dim=1, base_resolution=16, log2_hashmap_size=17, desired_resolution=38.4, gridtype='hash', align_corners=False)
 class GridEncoder(nn.Module):
     def __init__(self, input_dim=3, num_levels=16, level_dim=2, per_level_scale=2, base_resolution=16, log2_hashmap_size=19, desired_resolution=None, gridtype='hash', align_corners=False, interpolation='linear'):
         super().__init__()
@@ -101,18 +101,18 @@ class GridEncoder(nn.Module):
         if desired_resolution is not None:
             per_level_scale = np.exp2(np.log2(desired_resolution / base_resolution) / (num_levels - 1))
 
-        self.input_dim = input_dim # coord dims, 2 or 3
-        self.num_levels = num_levels # num levels, each level multiply resolution by 2
-        self.level_dim = level_dim # encode channels per level
-        self.per_level_scale = per_level_scale # multiply resolution by this scale at each level.
-        self.log2_hashmap_size = log2_hashmap_size
-        self.base_resolution = base_resolution
-        self.output_dim = num_levels * level_dim
-        self.gridtype = gridtype
-        self.gridtype_id = _gridtype_to_id[gridtype] # "tiled" or "hash"
-        self.interpolation = interpolation
-        self.interp_id = _interp_to_id[interpolation] # "linear" or "smoothstep"
-        self.align_corners = align_corners
+        self.input_dim = input_dim # coord dims, 2 or 3 (트라이 플레인 해시 인코더이므로 여기서는 디멘션 값이 2이다.)
+        self.num_levels = num_levels # num levels, each level multiply resolution by 2 디폴트로 12가 들어간다.
+        self.level_dim = level_dim # encode channels per level # 1
+        self.per_level_scale = per_level_scale # multiply resolution by this scale at each level. 1.082840917916368
+        self.log2_hashmap_size = log2_hashmap_size # 17
+        self.base_resolution = base_resolution # 16
+        self.output_dim = num_levels * level_dim # 12
+        self.gridtype = gridtype # 'hash'
+        self.gridtype_id = _gridtype_to_id[gridtype] # "tiled" or "hash" # 0
+        self.interpolation = interpolation # 'linear'
+        self.interp_id = _interp_to_id[interpolation] # "linear" or "smoothstep" # 0
+        self.align_corners = align_corners # False
 
         # allocate parameters
         offsets = []

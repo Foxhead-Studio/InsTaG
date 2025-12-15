@@ -21,13 +21,13 @@ class Camera(nn.Module):
                  ):
         super(Camera, self).__init__()
 
-        self.uid = uid
-        self.colmap_id = colmap_id
+        self.uid = uid # 0
+        self.colmap_id = colmap_id # 419
         self.R = R
         self.T = T
         self.FoVx = FoVx
         self.FoVy = FoVy
-        self.image_name = image_name
+        self.image_name = image_name # 419
         self.talking_dict = talking_dict
 
         try:
@@ -41,13 +41,13 @@ class Camera(nn.Module):
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
         
-        if background is not None:
+        if background is not None: # 디폴트 None
             self.background = background.clamp(0, 255).to(self.data_device)
         
         # for key in self.mask.keys():
         #     self.mask[key] = torch.as_tensor(self.mask[key], device=self.data_device)
 
-        if gt_alpha_mask is not None:
+        if gt_alpha_mask is not None: # 디폴트 None
             self.original_image *= gt_alpha_mask.to(self.data_device)
         # else:
         #     self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
@@ -58,10 +58,10 @@ class Camera(nn.Module):
         self.trans = trans
         self.scale = scale
 
-        self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
-        self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
-        self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
-        self.camera_center = self.world_view_transform.inverse()[3, :3]
+        self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda() # W2C 행렬 생성
+        self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda() # 카메라 좌표계에서 3D 공간상의 점을 정규화된 2D 이미지 평면(NDC)에 투영하는 매트릭스
+        self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0) # W2C 행렬과 위에서 계산한 투영 행렬을 곱해, 월드 좌표계에서 NDC로의 변환 행렬
+        self.camera_center = self.world_view_transform.inverse()[3, :3] # W2C의 역행렬 C2W를 구한 후, 이것의 마지막 열(위에서 3개)은 카메라의 월드 좌표계상 중심 위치입니다.
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):

@@ -117,12 +117,19 @@ def build_scaling_rotation(s, r):
     return L
 
 def safe_state(silent):
+    # safe_state 함수는 학습 환경의 출력을 제어하고, 난수 시드를 고정하며, CUDA 디바이스를 설정하는 함수이다.
+    # 예를 들어 safe_state(args.quiet)처럼 호출하면, args.quiet 값이 True면 출력이 거의 보이지 않고, False면 출력이 정상적으로 보인다.
+    # 즉, quiet 모드에 따라 출력 조정 및 시드 고정이 동시에 이루어진다.
+    # 아래에서 sys.stdout을 F 클래스로 교체하여, silent가 True일 때는 print 등 표준 출력이 무시된다.
     old_f = sys.stdout
     class F:
         def __init__(self, silent):
             self.silent = silent
 
         def write(self, x):
+            # silent가 False일 때만 출력을 수행한다.
+            # 줄 끝에 개행문자가 있으면, 현재 날짜와 시간을 [dd/mm HH:MM:SS] 형식으로 출력 뒤에 붙여준다.
+            # 예시: print("hello") → hello [13/06 15:22:01]
             if not self.silent:
                 if x.endswith("\n"):
                     old_f.write(x.replace("\n", " [{}]\n".format(str(datetime.now().strftime("%d/%m %H:%M:%S")))))
@@ -130,11 +137,17 @@ def safe_state(silent):
                     old_f.write(x)
 
         def flush(self):
+            # flush도 원래 sys.stdout의 flush를 그대로 호출한다.
             old_f.flush()
 
     sys.stdout = F(silent)
+    # sys.stdout을 F 객체로 교체하여, 이후의 print문이 silent 값에 따라 동작하게 만든다.
 
     random.seed(0)
+    # random 모듈의 시드를 0으로 고정한다. (실험 재현성을 위해)
     np.random.seed(0)
+    # numpy의 시드를 0으로 고정한다.
     torch.manual_seed(0)
+    # pytorch의 시드를 0으로 고정한다.
     torch.cuda.set_device(torch.device("cuda:0"))
+    # CUDA 디바이스를 0번으로 고정한다. (여러 GPU가 있을 때 항상 첫 번째 GPU를 사용)

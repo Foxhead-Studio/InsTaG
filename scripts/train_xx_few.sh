@@ -1,7 +1,7 @@
-dataset=$1
-workspace=$2
-gpu_id=$3
-audio_extractor='ave' # deepspeech, esperanto, hubert
+dataset=$1 # data/Lieu
+workspace=$2 # output/Lieu_debug
+gpu_id=$3 # 0
+audio_extractor='deepspeech' # deepspeech, esperanto, hubert, ave
 
 pretrain_project_path="output/pretrain_ave/"
 

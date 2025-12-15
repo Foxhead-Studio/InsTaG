@@ -34,36 +34,36 @@ except ImportError:
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     opt.densify_until_iter = 0
 
-    testing_iterations = [i for i in range(0, opt.iterations + 1, 2000)]
-    checkpoint_iterations = [opt.iterations]
+    testing_iterations = [i for i in range(0, opt.iterations + 1, 2000)] # [0, 2000]
+    checkpoint_iterations = [opt.iterations] # [2000]
 
     # vars
-    bg_iter = opt.densify_until_iter
-    lpips_start_iter = opt.iterations // 2
+    bg_iter = opt.densify_until_iter # 0
+    lpips_start_iter = opt.iterations // 2 # 1000
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     
     dataset.type = "face"
-    gaussians = GaussianModel(copy.deepcopy(dataset))
+    gaussians = GaussianModel(copy.deepcopy(dataset)) # 학습된 Lieu 얼굴 가우시안
     dataset.type = "mouth"
-    gaussians_mouth = GaussianModel(copy.deepcopy(dataset))
+    gaussians_mouth = GaussianModel(copy.deepcopy(dataset)) # 학습된 Lieu 입안 가우시안
     
-    scene = Scene(dataset, gaussians)
+    scene = Scene(dataset, gaussians) # 어차피 여기선 랜덤 초기화 된 포인트 클라우드 기반으로 가우시안을 초기화하니, gaussians가 들어가나 gaussians_mouth가 들어가나 상관없는 듯 하다.
     with torch.no_grad():
-        motion_net_mouth = MouthMotionNetwork(args=dataset).cuda()
-        motion_net = MotionNetwork(args=dataset).cuda()
+        motion_net_mouth = MouthMotionNetwork(args=dataset).cuda() # 입안 내부용 UMF
+        motion_net = MotionNetwork(args=dataset).cuda() # 얼굴 생성용 UMF
 
     # gaussians.training_setup(opt)
     # gaussians_mouth.training_setup(opt)
 
     (model_params, motion_params, _, _) = torch.load(os.path.join(scene.model_path, "chkpnt_face_latest.pth"))
-    gaussians.restore(model_params, opt)
-    motion_net.load_state_dict(motion_params)
+    gaussians.restore(model_params, opt) # 학습된 Lieu 얼굴 가우시안 체크포인트 로드
+    motion_net.load_state_dict(motion_params) # 얼굴 생성용 UMF 체크포인트 로드
 
     (model_params, motion_params, _, _) = torch.load(os.path.join(scene.model_path, "chkpnt_mouth_latest.pth"))
-    gaussians_mouth.restore(model_params, opt)
-    motion_net_mouth.load_state_dict(motion_params)
+    gaussians_mouth.restore(model_params, opt) # 학습된 Lieu 입안 가우시안 체크포인트 로드
+    motion_net_mouth.load_state_dict(motion_params) # 입안 내부용 UMF 체크포인트 로드
 
     lpips_criterion = lpips.LPIPS(net='alex').eval().cuda()
 
@@ -79,7 +79,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), ascii=True, dynamic_ncols=True, desc="Training progress")
     first_iter += 1
 
-    for iteration in range(first_iter, opt.iterations + 1):        
+    for iteration in range(first_iter, opt.iterations + 1): # 2000회 반복
 
         iter_start.record()
 
@@ -99,22 +99,55 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if (iteration - 1) == debug_from:
             pipe.debug = True
 
-        render_pkg = render_motion(viewpoint_cam, gaussians, motion_net, pipe, background, align=True)
+        render_pkg = render_motion(viewpoint_cam, gaussians, motion_net, pipe, background, align=True) # 얼굴 전체를 렌더링한다.
         # render_pkg_mouth = render_motion_mouth(viewpoint_cam, gaussians_mouth, motion_net_mouth, pipe, background, align=True)
-        render_pkg_mouth = render_motion_mouth_con(viewpoint_cam, gaussians_mouth, motion_net_mouth, gaussians, motion_net, pipe, background, align=True)
-        viewspace_point_tensor, visibility_filter = render_pkg["viewspace_points"], render_pkg["visibility_filter"]
-        viewspace_point_tensor_mouth, visibility_filter_mouth = render_pkg_mouth["viewspace_points"], render_pkg_mouth["visibility_filter"]
+        render_pkg_mouth = render_motion_mouth_con(viewpoint_cam, gaussians_mouth, motion_net_mouth, gaussians, motion_net, pipe, background, align=True) # 입안(구강 내부)을 렌더링한다.
+        viewspace_point_tensor, visibility_filter = render_pkg["viewspace_points"], render_pkg["visibility_filter"] # 얼굴 전체 렌더링 결과에서 3D 포인트와 가시성 정보를 가져온다.
+        viewspace_point_tensor_mouth, visibility_filter_mouth = render_pkg_mouth["viewspace_points"], render_pkg_mouth["visibility_filter"] # 입안 렌더링 결과에서 3D 포인트와 가시성 정보를 가져온다.
 
+        alpha_mouth = render_pkg_mouth["alpha"] # 입안 렌더링 결과의 알파(투명도) 맵을 가져온다.
+        alpha = render_pkg["alpha"] # 얼굴 전체 렌더링 결과의 알파(투명도) 맵을 가져온다.
+        
+        # 입안(구강 내부) 이미지를 생성한다.
+        # - render_pkg_mouth["render"]: 입안 가우시안으로부터 렌더링된 RGB 이미지 (0~1 범위, shape: [3, H, W])
+        # - alpha_mouth: 입안 가우시안의 알파(투명도) 맵 (shape: [1, H, W])
+        # - background: 배경 색상 텐서 ([3], 예: [0, 1, 0]은 초록색)
+        # - viewpoint_cam.background: 원본 이미지의 배경 색상 ([3], 0~255 범위)
+        # 
+        # 입안 이미지는 다음과 같이 합성된다:
+        #   1. 입안 가우시안이 투명한 영역(1 - alpha_mouth)에는 배경색을 넣는다.
+        #   2. 배경색은 두 가지로 나뉜다:
+        #      - background[:, None, None]: 기본 배경색(예: 초록색)
+        #      - viewpoint_cam.background.cuda() / 255.0: 원본 이미지의 배경색(정규화)
+        #   3. 두 배경색 중 viewpoint_cam.background는 실제 카메라별 배경색을 반영한다.
+        #   4. 최종적으로, 입안 가우시안이 불투명한 영역(alpha_mouth)에는 render_pkg_mouth["render"]가, 
+        #      투명한 영역(1 - alpha_mouth)에는 viewpoint_cam.background가 들어간다.
+        mouth_image = (
+            render_pkg_mouth["render"]  # 입안 가우시안이 불투명한 영역(입 내부)
+            - background[:, None, None] * (1.0 - alpha_mouth)  # 기본 배경색(초록색) 제거
+            + viewpoint_cam.background.cuda() / 255.0 * (1.0 - alpha_mouth)  # 카메라별 배경색 추가
+        )
 
-        alpha_mouth = render_pkg_mouth["alpha"]
-        alpha = render_pkg["alpha"]
-        mouth_image = render_pkg_mouth["render"] - background[:, None, None] * (1.0 - alpha_mouth) + viewpoint_cam.background.cuda() / 255.0 * (1.0 - alpha_mouth)
-        image = render_pkg["render"] - background[:, None, None] * (1.0 - alpha) + mouth_image * (1.0 - alpha)
+        # 얼굴 전체 이미지를 생성한다.
+        # - render_pkg["render"]: 얼굴 전체(외부) 가우시안으로부터 렌더링된 RGB 이미지
+        # - alpha: 얼굴 전체 가우시안의 알파(투명도) 맵
+        # 
+        # 얼굴 전체 이미지는 다음과 같이 합성된다:
+        #   1. 얼굴 전체 가우시안이 투명한 영역(1 - alpha)에는 mouth_image(입안 이미지)를 넣는다.
+        #      즉, 입이 벌어진 부분(얼굴 가우시안이 투명한 곳)에만 입안 이미지를 삽입한다.
+        #   2. 얼굴 전체 가우시안이 불투명한 영역(alpha)에는 render_pkg["render"]가 그대로 들어간다.
+        #   3. 이로써, 얼굴 전체 이미지에서 입이 벌어진 부분만 입안 이미지로 치환된 최종 합성 이미지가 만들어진다.
+        image = (
+            render_pkg["render"]  # 얼굴 전체 가우시안이 불투명한 영역(얼굴 외부)
+            - background[:, None, None] * (1.0 - alpha)  # 기본 배경색(초록색) 제거
+            + mouth_image * (1.0 - alpha)  # 얼굴 가우시안이 투명한 영역(입 부분)에 입안 이미지 삽입
+        )
                 
-        gt_image  = viewpoint_cam.original_image.cuda() / 255.0
-        gt_image_white = gt_image * head_mask + background[:, None, None] * ~head_mask
+        gt_image  = viewpoint_cam.original_image.cuda() / 255.0 # 정답(ground truth) 이미지를 0~1로 정규화하여 가져온다.
+        gt_image_white = gt_image * head_mask + background[:, None, None] * ~head_mask # head_mask(얼굴+머리+입안) 영역만 정답 이미지를 사용하고, 나머지는 배경색으로 채운다.
 
         if iteration > bg_iter:
+            # 전부 다 동결시키고 PMF만 학습 시킨다.
             for param in motion_net.parameters():
                 param.requires_grad = False
             for param in motion_net_mouth.parameters():
@@ -132,7 +165,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
 
         # Loss
-        if iteration < bg_iter:            
+        if iteration < bg_iter: # 해당 안 됨.
             image[:, ~head_mask] = background[:, None]
             # gt_image_white[:, ~head_mask] = background[:, None]
 
@@ -150,7 +183,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image_t = image.clone()
             gt_image_t = gt_image.clone()
 
-        if iteration > lpips_start_iter:        
+        if iteration > lpips_start_iter: # 해당 안 됨.    
             # mask mouth
             # [xmin, xmax, ymin, ymax] = viewpoint_cam.talking_dict['lips_rect']
             # image_t[:, xmin:xmax, ymin:ymax] = 1

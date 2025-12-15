@@ -45,18 +45,23 @@ def render_set(model_path, name, iteration, views, gaussians, motion_net, gaussi
     all_preds_mouth = []
 
     # gaussians._opacity[(gaussians.get_xyz[:, -1] < -0.06).squeeze()] = -10^5
-    # save_dir = os.path.join(model_path, "deformed")
-    # makedirs(save_dir, exist_ok=True)
-    # save_path = os.path.join(save_dir, "{}.ply".format(0))
-    # exit()
+    # deformed 가우시안을 저장할 디렉토리를 생성한다
+    # model_path 아래에 "deformed" 폴더를 만들고, 각 view별로 deformed ply 파일을 저장할 준비를 한다
+    save_dir = os.path.join(model_path, "deformed")
+    makedirs(save_dir, exist_ok=True)
     
     for idx, view in enumerate(tqdm(views, desc="Rendering progress", ascii=True)):
         with torch.no_grad():
             render_pkg = render_motion(view, gaussians, motion_net, pipeline, background, frame_idx=0, personalized=personalized, align=True)
             render_pkg_mouth = render_motion_mouth_con(view, gaussians_mouth, motion_net_mouth, gaussians, motion_net, pipeline, background, frame_idx=0, personalized=personalized, align=True, inference=True)
-        # gaussians.save_deformed_ply(gaussians.get_xyz + render_pkg['motion']['d_xyz'], gaussians._scaling + render_pkg['motion']['d_scale'], gaussians._rotation + render_pkg['motion']['d_rot'], save_path)
-        # if idx > 5:
-        #     exit()
+        # 각 view별로 deformed 가우시안을 ply 파일로 저장한다
+        # render_pkg['motion']에서 예측된 변위(d_xyz, d_scale, d_rot)를 원본 가우시안 속성에 더해서 deformed 상태를 만든다
+        # 예를 들어, idx=0이면 "0.ply", idx=1이면 "1.ply"로 저장된다
+        # idx가 10 이하일 때만 ply 파일로 저장한다 (메모리 절약을 위해 일부 프레임만 저장)
+        if idx <= 10:
+            save_path = os.path.join(save_dir, "{}.ply".format(idx))
+            gaussians.save_deformed_ply(gaussians.get_xyz + render_pkg['motion']['d_xyz'], gaussians._scaling + render_pkg['motion']['d_scale'], gaussians._rotation + render_pkg['motion']['d_rot'], save_path)
+
         alpha_mouth = render_pkg_mouth["alpha"]
         if dilate:
             # alpha_mouth = alpha_mouth.sqrt()
@@ -112,6 +117,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         
         render_set(dataset.model_path, "test" if not use_train else "train", scene.loaded_iter, scene.getTestCameras() if not use_train else scene.getTrainCameras(), gaussians, motion_net, gaussians_mouth, motion_net_mouth, pipeline, background, fast, dilate, personalized)
+        # render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, motion_net, gaussians_mouth, motion_net_mouth, pipeline, background, fast, dilate, personalized)
 
 if __name__ == "__main__":
     # Set up command line argument parser

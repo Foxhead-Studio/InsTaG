@@ -46,12 +46,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         select_interval = 7
     else:
         warm_step = 3000
-        opt.densify_until_iter = opt.iterations - 1000
-        bg_iter = opt.iterations-1000
+        opt.densify_until_iter = opt.iterations - 1000 # 9000
+        bg_iter = opt.iterations-1000 # 9000
         lpips_start_iter = 999999999999
-        motion_stop_iter = bg_iter
-        mouth_select_iter = opt.iterations
-        mouth_step = 1 / mouth_select_iter
+        motion_stop_iter = bg_iter # 9000
+        mouth_select_iter = opt.iterations # 10000
+        mouth_step = 1 / mouth_select_iter # 0.0001
         select_interval = 5
 
     first_iter = 0
@@ -59,7 +59,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians = GaussianModel(dataset)
     scene = Scene(dataset, gaussians)
 
-    motion_net = MouthMotionNetwork(args=dataset).cuda()
+    motion_net = MouthMotionNetwork(args=dataset).cuda() # 입 내부용 UMF
     motion_optimizer = torch.optim.AdamW(motion_net.get_params(5e-3, 5e-4), betas=(0.9, 0.99), eps=1e-8, weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.LambdaLR(motion_optimizer, lambda iter: 0.1 if iter < warm_step else 0.5 ** (iter / opt.iterations))
     
@@ -72,21 +72,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     lpips_criterion = lpips.LPIPS(net='alex').eval().cuda()
 
     gaussians.training_setup(opt)
+    
+    # 
     with torch.no_grad():
         gaussians._xyz /= 2
         gaussians._xyz[:,1] -= 0.05
         
     dataset.type = "face"
     with torch.no_grad():
-        gaussians_face = GaussianModel(copy.deepcopy(dataset))
-        motion_net_face = MotionNetwork(args=dataset).cuda()
+        gaussians_face = GaussianModel(copy.deepcopy(dataset)) # 얼굴 생성용 가우시안
+        motion_net_face = MotionNetwork(args=dataset).cuda() # 얼굴 생성용 UMF
         scene.gaussians_2 = gaussians_face
 
     (model_params, motion_params, _, _) = torch.load(os.path.join(scene.model_path, "chkpnt_face_latest.pth"))
     gaussians_face.restore(model_params, opt)
     motion_net_face.load_state_dict(motion_params)
 
-    if checkpoint:
+    if checkpoint: # None으로 건너 뜀
         (model_params, motion_params, motion_optimizer_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
         motion_net.load_state_dict(motion_params)
@@ -156,6 +158,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # turn to black
             bg_color = [0, 0, 0] # if dataset.white_background else [0, 0, 0]
             background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        # 학습 후반부에 배경색을 검은색으로 변경하면, 렌더링된 이미지에서 입술 영역이 더욱 명확하게 부각된다. 이는 모델이 입술의 형태와 움직임 자체에 더 집중하여 세부적인 특징을 학습하도록 유도한다.
 
         face_mask = torch.as_tensor(viewpoint_cam.talking_dict["face_mask"]).cuda()
         hair_mask = torch.as_tensor(viewpoint_cam.talking_dict["hair_mask"]).cuda()
@@ -168,7 +171,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         if iteration < warm_step:
             # render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-            enable_align = iteration > 1000
+            enable_align = iteration > 1000 # 1000번 이전까진 align 안 함.
             render_pkg = render_motion_mouth_con(viewpoint_cam, gaussians, motion_net, gaussians_face, motion_net_face, pipe, background, personalized=False, align=enable_align, k=randint(10, 50))
             # for param in motion_net.parameters():
             #     param.requires_grad = False
@@ -185,6 +188,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration > motion_stop_iter:
             for param in motion_net.parameters():
                 param.requires_grad = False
+        
         if iteration > bg_iter:
             gaussians._xyz.requires_grad = False
             gaussians._opacity.requires_grad = False
@@ -192,7 +196,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # gaussians._features_rest.requires_grad = False
             gaussians._scaling.requires_grad = False
             gaussians._rotation.requires_grad = False
-        
+
+            # 배경색이 검은색으로 변경된 후 (iteration > bg_iter 조건) gaussians 객체의 여러 파라미터에 대해 requires_grad = False로 설정하는 이유는 입술 가우시안의 위치, 불투명도, 스케일, 회전 등을 동결하여, 
+            # 학습 후반부에는 입술 모션 네트워크(motion_net)와 입술 가우시안의 색상/SH 계수 (_features_dc, _features_rest는 주석 처리되어 있지만 의도상 포함)만 집중적으로 학습시키기 위함이다.
+
+            # 학습 후반부에는 입술 가우시안의 기본적인 공간적 배치(_xyz), 불투명도(_opacity), 크기(_scaling), 방향(_rotation)이 어느 정도 최적화되었다고 가정한다.
+            # 이 파라미터들을 동결함으로써, 모델은 더 이상 기본적인 구조를 변경하는 데 리소스를 낭비하지 않고, 입술 모션 네트워크가 오디오에 따른 입술 움직임 변화를 더욱 정밀하게 학습하는 데 집중할 수 있게 된다.
+            # 이는 미세한 움직임의 정확도와 자연스러움을 높이는 데 기여한다.
+
+            # 주석 처리된 _features_dc.requires_grad = False와 _features_rest.requires_grad = False가 만약 활성화되지 않는다면, 입술 가우시안의 색상/SH 계수는 계속 학습된다. 
+            # 이 경우, 위치/크기/회전이 고정된 상태에서 입술의 색상, 음영, 텍스처 등 시각적인 디테일이 더욱 세밀하게 최적화될 수 있다.
+            # 입술의 모양이 이미 잘 잡혔다고 가정하고, 이제는 입술 표면의 미세한 변화나 색상 표현을 다듬는 데 집중하는 것이다.
+
         # Loss            
         image_green[:, (lips_mask ^ mouth_mask)] = background[:, None]
 
@@ -208,7 +223,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         image_t = image_green.clone()
         gt_image_t = gt_image_green.clone()
 
-        if iteration > lpips_start_iter:
+        if iteration > lpips_start_iter: # 의미 없음.
             patch_size = random.randint(16, 21) * 2
             loss += 0.01 * lpips_criterion(patchify(image_t[None, ...] * 2 - 1, patch_size), patchify(gt_image_t[None, ...] * 2 - 1, patch_size)).mean()
             if mode_long:

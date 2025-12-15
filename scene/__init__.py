@@ -28,11 +28,11 @@ class Scene:
         """b
         :param path: Path to colmap scene main folder.
         """
-        self.model_path = args.model_path
+        self.model_path = args.model_path # 'output/Lieu_few_frames' (모델 결과가 저장될 경로)
         self.loaded_iter = None
-        self.gaussians = gaussians
+        self.gaussians = gaussians # 인자로 받아온, Lieu에 대한 단순 초기화 된 가우시안
 
-        if load_iteration:
+        if load_iteration: # None
             if load_iteration == -1:
                 self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
             else:
@@ -45,6 +45,7 @@ class Scene:
         if os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval, args=args, preload=args.preload, all_for_train=args.all_for_train)
+            # source path = '/home/white/github/InsTaG/data/Lieu' white_background = False, eval = False, all_for_train = False
         else:
             assert False, "Could not recognize scene type!"
 

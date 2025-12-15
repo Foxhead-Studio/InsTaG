@@ -39,7 +39,6 @@ class FreqEncoder(nn.Module):
 
         out = torch.cat(out, dim=-1)
 
-
         return out
 
 def get_encoder(encoding, input_dim=3, 
@@ -63,7 +62,7 @@ def get_encoder(encoding, input_dim=3,
     elif encoding == 'hashgrid':
         from gridencoder import GridEncoder
         encoder = GridEncoder(input_dim=input_dim, num_levels=num_levels, level_dim=level_dim, base_resolution=base_resolution, log2_hashmap_size=log2_hashmap_size, desired_resolution=desired_resolution, gridtype='hash', align_corners=align_corners)
-    
+        # (input_dim=2, num_levels=12, level_dim=1, base_resolution=16, log2_hashmap_size=17, desired_resolution=38.4, gridtype='hash', align_corners=False)
     elif encoding == 'tiledgrid':
         from gridencoder import GridEncoder
         encoder = GridEncoder(input_dim=input_dim, num_levels=num_levels, level_dim=level_dim, base_resolution=base_resolution, log2_hashmap_size=log2_hashmap_size, desired_resolution=desired_resolution, gridtype='tiled', align_corners=align_corners)
