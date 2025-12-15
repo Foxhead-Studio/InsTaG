@@ -62,10 +62,9 @@
         "--densify_grad_threshold", "0.0005",
         "--audio_extractor", "deepspeech",
         "--pretrain_path", "output/pretrain_ave/chkpnt_ema_face_latest.pth",
-        "--iterations", "5000",
+        "--iterations", "10000",
         "--sh_degree", "1",
-        "--N_views", "250",
-        "--load_ply_path", "output/MEAD/027/left_30/point_cloud/iteration_10000_face/point_cloud.ply"
+        "--N_views", "250"
       ]
     },
     {
