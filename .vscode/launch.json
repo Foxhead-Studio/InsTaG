@@ -1,0 +1,269 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    
+    {
+      "name": "Pretrain Face",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/pretrain_face.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "-s", "data/pretrain",
+        "-m", "debug_01",
+        "--type", "face",
+        "--init_num", "2000",
+        "--densify_grad_threshold", "0.0005",
+        "--audio_extractor", "deepspeech",
+        "--iterations", "30000"
+      ]
+    },
+    {
+      "name": "Pretrain Mouth",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/pretrain_mouth.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "-s", "data/pretrain",
+        "-m", "debug_01",
+        "--type", "mouth",
+        "--init_num", "5000",
+        "--audio_extractor", "deepspeech",
+        "--iterations", "30000"
+      ]
+    },
+    {
+      "name": "Adaptation Train Face",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_face.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "--type", "face",
+        "-s", "data/MEAD/027/front",
+        "-m", "output/MEAD/027/front",
+        "--init_num", "2000",
+        "--densify_grad_threshold", "0.0005",
+        "--audio_extractor", "deepspeech",
+        "--pretrain_path", "output/pretrain_ave/chkpnt_ema_face_latest.pth",
+        "--iterations", "5000",
+        "--sh_degree", "1",
+        "--N_views", "250",
+        "--load_ply_path", "output/MEAD/027/left_30/point_cloud/iteration_10000_face/point_cloud.ply"
+      ]
+    },
+    {
+      "name": "Adaptation Train Mouth",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_mouth.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "--type", "mouth",
+        "-s", "data/MEAD/027/left_30",
+        "-m", "output/MEAD/027/left_30",
+        "--audio_extractor", "deepspeech",
+        "--pretrain_path", "output/pretrain_ave/chkpnt_ema_mouth_latest.pth",
+        "--init_num", "5000",
+        "--iterations", "10000",
+        "--sh_degree", "1",
+        "--N_views", "250"
+      ]
+    },
+    {
+      "name": "Adaptation Train Fuse Con",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_fuse_con.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "-s", "data/MEAD/027/left_30",
+        "-m", "output/MEAD/027/left_30",
+        "--opacity_lr", "0.001",
+        "--audio_extractor", "deepspeech",
+        "--iterations", "2000",
+        "--sh_degree", "1",
+        "--N_views", "250"
+      ]
+    },
+    {
+      "name": "Synthesize Fuse",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/synthesize_fuse.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "-s", "data/MEAD/027/left_30",
+        "-m", "output/MEAD/027/left_30",
+        "--use_train",
+        "--audio_extractor", "deepspeech",
+        "--dilate"
+      ]
+    },
+    {
+      "name": "Metrics",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/metrics.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "args": [
+        "output/mark_12s/test/ours_None/renders/out.mp4",
+        "output/mark_12s/test/ours_None/gt/out.mp4"
+      ]
+    },
+    {
+      "name": "Adaptation Train Emotion",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_emotion.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "--type", "face",
+        "-s", "data/emotion/happy",
+        "-m", "output/emotion/happy",
+        "--init_num", "2000",
+        "--densify_grad_threshold", "0.0005",
+        "--audio_extractor", "deepspeech",
+        "--pretrain_path", "output/pretrain_ave/chkpnt_ema_face_latest.pth",
+        "--iterations", "10000",
+        "--sh_degree", "1",
+        "--N_views", "250",
+        "--use_va",
+      ]
+    },
+
+
+
+
+
+
+
+
+
+    {
+      "name": "Adaptation Train Face with few frames",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_face_few_frames.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "--type", "face",
+        "-s", "data/Lieu",
+        "-m", "output/Lieu_few_frames",
+        "--init_num", "5000",
+        "--densify_grad_threshold", "0.0005",
+        "--audio_extractor", "deepspeech",
+        "--pretrain_path", "output/pretrain_ave/chkpnt_ema_face_latest.pth",
+        "--iterations", "3000",
+        "--sh_degree", "1",
+        "--N_views", ""
+      ]
+    },
+    {
+      "name": "Adaptation Train Mouth with few frames",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_mouth_few_frames.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "--type", "mouth",
+        "-s", "data/Lieu",
+        "-m", "output/Lieu_few_frames",
+        "--audio_extractor", "deepspeech",
+        "--pretrain_path", "output/pretrain_ave/chkpnt_ema_mouth_latest.pth",
+        "--init_num", "5000",
+        "--iterations", "3000",
+        "--sh_degree", "1",
+        "--N_views", "2"
+      ]
+    },
+    {
+      "name": "Adaptation Train Fuse Con with few frames",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/train_fuse_con.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "-s", "data/Lieu",
+        "-m", "output/Lieu_few_frames",
+        "--opacity_lr", "0.001",
+        "--audio_extractor", "deepspeech",
+        "--iterations", "2000",
+        "--sh_degree", "1",
+        "--N_views", "2"
+      ]
+    },
+    {
+      "name": "Synthesize Fuse with few frames",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/synthesize_fuse.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "args": [
+        "-s", "data/Lieu",
+        "-m", "output/Lieu_few_frames",
+        "--eval",
+        "--audio_extractor", "deepspeech",
+        "--dilate",
+      ]
+    },
+  ]
+}
